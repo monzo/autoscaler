@@ -19,8 +19,11 @@ package logic
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
+	"golang.org/x/time/rate"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -156,6 +159,22 @@ func TestRunOnceNotingToProcess(t *testing.T) {
 		recommendationProcessor: &test.FakeRecommendationProcessor{},
 	}
 	updater.RunOnce()
+}
+
+func TestGetRateLimiter(t *testing.T) {
+	cases := []struct {
+		rateLimit       int
+		expectedLimiter *rate.Limiter
+	}{
+		{0, rate.NewLimiter(rate.Inf, 0)},
+		{-1, rate.NewLimiter(rate.Inf, 0)},
+		{10, rate.NewLimiter(rate.Every(10/time.Second), 10)},
+	}
+	for _, tc := range cases {
+		limiter := getRateLimiter(tc.rateLimit)
+		assert.Equal(t, tc.expectedLimiter.Burst(), limiter.Burst())
+		assert.Equal(t, tc.expectedLimiter.Limit(), limiter.Limit())
+	}
 }
 
 type fakeEvictFactory struct {

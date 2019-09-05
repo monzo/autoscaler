@@ -45,6 +45,9 @@ var (
 	evictionToleranceFraction = flag.Float64("eviction-tolerance", 0.5,
 		`Fraction of replica count that can be evicted for update, if more than one pod can be evicted.`)
 
+	evictionRateLimit = flag.Int("eviction-rate-limit", 60, `
+		Number of pods that can be evicted per seconds with a burst of at most the value of the rate.`)
+
 	address = flag.String("address", ":8943", "The address to expose Prometheus metrics.")
 )
 
@@ -72,7 +75,7 @@ func main() {
 		target.NewBeta1TargetSelectorFetcher(config),
 	)
 	// TODO: use SharedInformerFactory in updater
-	updater, err := updater.NewUpdater(kubeClient, vpaClient, *minReplicas, *evictionToleranceFraction, vpa_api_util.NewCappingRecommendationProcessor(), nil, targetSelectorFetcher)
+	updater, err := updater.NewUpdater(kubeClient, vpaClient, *minReplicas, *evictionRateLimit, *evictionToleranceFraction, vpa_api_util.NewCappingRecommendationProcessor(), nil, targetSelectorFetcher)
 	if err != nil {
 		klog.Fatalf("Failed to create updater: %v", err)
 	}

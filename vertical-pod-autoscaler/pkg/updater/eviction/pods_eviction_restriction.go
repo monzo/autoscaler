@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	appsv1 "k8s.io/api/apps/v1"
 	apiv1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1beta1"
@@ -52,6 +54,7 @@ type podsEvictionRestrictionImpl struct {
 	client                       kube_client.Interface
 	podToReplicaCreatorMap       map[string]podReplicaCreator
 	creatorToSingleGroupStatsMap map[podReplicaCreator]singleGroupStats
+	evictionRateLimiter          *rate.Limiter
 }
 
 type singleGroupStats struct {
@@ -74,6 +77,7 @@ type podsEvictionRestrictionFactoryImpl struct {
 	ssInformer                cache.SharedIndexInformer // informer for Stateful Sets
 	rsInformer                cache.SharedIndexInformer // informer for Replica Sets
 	minReplicas               int
+	evictionRateLimiter       *rate.Limiter
 	evictionToleranceFraction float64
 }
 
@@ -94,6 +98,10 @@ type podReplicaCreator struct {
 
 // CanEvict checks if pod can be safely evicted
 func (e *podsEvictionRestrictionImpl) CanEvict(pod *apiv1.Pod) bool {
+	// check if we hit the rate limit
+	if !e.evictionRateLimiter.Allow() {
+		return false
+	}
 	cr, present := e.podToReplicaCreatorMap[getPodID(pod)]
 	if present {
 		singleGroupStats, present := e.creatorToSingleGroupStatsMap[cr]
@@ -156,8 +164,8 @@ func (e *podsEvictionRestrictionImpl) Evict(podToEvict *apiv1.Pod, eventRecorder
 }
 
 // NewPodsEvictionRestrictionFactory creates PodsEvictionRestrictionFactory
-func NewPodsEvictionRestrictionFactory(client kube_client.Interface, minReplicas int,
-	evictionToleranceFraction float64) (PodsEvictionRestrictionFactory, error) {
+func NewPodsEvictionRestrictionFactory(client kube_client.Interface, evictionRateLimiter *rate.Limiter,
+	minReplicas int, evictionToleranceFraction float64) (PodsEvictionRestrictionFactory, error) {
 	rcInformer, err := setUpInformer(client, replicationController)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create rcInformer: %v", err)
@@ -170,12 +178,14 @@ func NewPodsEvictionRestrictionFactory(client kube_client.Interface, minReplicas
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create rsInformer: %v", err)
 	}
+
 	return &podsEvictionRestrictionFactoryImpl{
 		client:                    client,
 		rcInformer:                rcInformer, // informer for Replication Controllers
 		ssInformer:                ssInformer, // informer for Replica Sets
 		rsInformer:                rsInformer, // informer for Stateful Sets
 		minReplicas:               minReplicas,
+		evictionRateLimiter:       evictionRateLimiter,
 		evictionToleranceFraction: evictionToleranceFraction}, nil
 }
 
@@ -240,7 +250,8 @@ func (f *podsEvictionRestrictionFactoryImpl) NewPodsEvictionRestriction(pods []*
 	return &podsEvictionRestrictionImpl{
 		client:                       f.client,
 		podToReplicaCreatorMap:       podToReplicaCreatorMap,
-		creatorToSingleGroupStatsMap: creatorToSingleGroupStatsMap}
+		creatorToSingleGroupStatsMap: creatorToSingleGroupStatsMap,
+		evictionRateLimiter:          f.evictionRateLimiter}
 }
 
 func getPodReplicaCreator(pod *apiv1.Pod) (*podReplicaCreator, error) {

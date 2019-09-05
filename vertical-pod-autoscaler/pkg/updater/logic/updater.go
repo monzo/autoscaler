@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"golang.org/x/time/rate"
+
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -59,11 +61,13 @@ type updater struct {
 }
 
 // NewUpdater creates Updater with given configuration
-func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clientset, minReplicasForEvicition int, evictionToleranceFraction float64, recommendationProcessor vpa_api_util.RecommendationProcessor, evictionAdmission priority.PodEvictionAdmission, selectorFetcher target.VpaTargetSelectorFetcher) (Updater, error) {
-	factory, err := eviction.NewPodsEvictionRestrictionFactory(kubeClient, minReplicasForEvicition, evictionToleranceFraction)
+func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clientset, minReplicasForEvicition int, evictionRateLimit int, evictionToleranceFraction float64, recommendationProcessor vpa_api_util.RecommendationProcessor, evictionAdmission priority.PodEvictionAdmission, selectorFetcher target.VpaTargetSelectorFetcher) (Updater, error) {
+	evictionRateLimiter := getRateLimiter(evictionRateLimit)
+	factory, err := eviction.NewPodsEvictionRestrictionFactory(kubeClient, evictionRateLimiter, minReplicasForEvicition, evictionToleranceFraction)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create eviction restriction factory: %v", err)
 	}
+
 	return &updater{
 		vpaLister:               vpa_api_util.NewAllVpasLister(vpaClient, make(chan struct{})),
 		podLister:               newPodLister(kubeClient),
@@ -154,6 +158,16 @@ func (u *updater) RunOnce() {
 	}
 	timer.ObserveStep("EvictPods")
 	timer.ObserveTotal()
+}
+
+func getRateLimiter(evictionRateLimit int) *rate.Limiter {
+	var evictionRateLimiter *rate.Limiter
+	if evictionRateLimit == -1 || evictionRateLimit == 0 {
+		evictionRateLimiter = rate.NewLimiter(rate.Inf, 0)
+	} else {
+		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1/evictionRateLimit)*time.Second), evictionRateLimit)
+	}
+	return evictionRateLimiter
 }
 
 // getPodsUpdateOrder returns list of pods that should be updated ordered by update priority
