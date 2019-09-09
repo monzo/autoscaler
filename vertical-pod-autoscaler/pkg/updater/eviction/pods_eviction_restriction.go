@@ -100,6 +100,7 @@ type podReplicaCreator struct {
 func (e *podsEvictionRestrictionImpl) CanEvict(pod *apiv1.Pod) bool {
 	// check if we hit the rate limit
 	if !e.evictionRateLimiter.Allow() {
+		klog.Warningf("Updater rate limited; Pod can't be evicted.")
 		return false
 	}
 	cr, present := e.podToReplicaCreatorMap[getPodID(pod)]
