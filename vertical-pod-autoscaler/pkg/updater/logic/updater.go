@@ -61,7 +61,7 @@ type updater struct {
 }
 
 // NewUpdater creates Updater with given configuration
-func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clientset, minReplicasForEvicition int, evictionRateLimit int, evictionToleranceFraction float64, recommendationProcessor vpa_api_util.RecommendationProcessor, evictionAdmission priority.PodEvictionAdmission, selectorFetcher target.VpaTargetSelectorFetcher) (Updater, error) {
+func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clientset, minReplicasForEvicition int, evictionRateLimit float64, evictionToleranceFraction float64, recommendationProcessor vpa_api_util.RecommendationProcessor, evictionAdmission priority.PodEvictionAdmission, selectorFetcher target.VpaTargetSelectorFetcher) (Updater, error) {
 	evictionRateLimiter := getRateLimiter(evictionRateLimit)
 	factory, err := eviction.NewPodsEvictionRestrictionFactory(kubeClient, evictionRateLimiter, minReplicasForEvicition, evictionToleranceFraction)
 	if err != nil {
@@ -160,12 +160,12 @@ func (u *updater) RunOnce() {
 	timer.ObserveTotal()
 }
 
-func getRateLimiter(evictionRateLimit int) *rate.Limiter {
+func getRateLimiter(evictionRateLimit float64) *rate.Limiter {
 	var evictionRateLimiter *rate.Limiter
 	if evictionRateLimit == -1 || evictionRateLimit == 0 {
 		evictionRateLimiter = rate.NewLimiter(rate.Inf, 0)
 	} else {
-		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1/evictionRateLimit)*time.Second), evictionRateLimit)
+		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1.0/evictionRateLimit*float64(time.Second))), 0)
 	}
 	return evictionRateLimiter
 }

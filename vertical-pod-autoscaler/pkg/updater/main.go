@@ -45,7 +45,7 @@ var (
 	evictionToleranceFraction = flag.Float64("eviction-tolerance", 0.5,
 		`Fraction of replica count that can be evicted for update, if more than one pod can be evicted.`)
 
-	evictionRateLimit = flag.Int("eviction-rate-limit", -1, `
+	evictionRateLimit = flag.Float64("eviction-rate-limit", -1, `
 		Number of pods that can be evicted per seconds with a burst of at most the value of the rate.`)
 
 	address = flag.String("address", ":8943", "The address to expose Prometheus metrics.")
