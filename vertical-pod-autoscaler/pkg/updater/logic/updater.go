@@ -164,8 +164,10 @@ func getRateLimiter(evictionRateLimit float64) *rate.Limiter {
 	var evictionRateLimiter *rate.Limiter
 	if evictionRateLimit == -1 || evictionRateLimit == 0 {
 		evictionRateLimiter = rate.NewLimiter(rate.Inf, 0)
+		klog.Info("Rate limit disabled")
 	} else {
 		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1.0/evictionRateLimit*float64(time.Second))), 0)
+		klog.Infof("Create a rate limit with %f rate equivalent to 1 pod every %+v", evictionRateLimit, time.Duration(1.0/evictionRateLimit*float64(time.Second)))
 	}
 	return evictionRateLimiter
 }
