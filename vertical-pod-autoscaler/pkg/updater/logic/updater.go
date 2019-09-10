@@ -17,6 +17,7 @@ limitations under the License.
 package logic
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -47,7 +48,7 @@ import (
 // Updater performs updates on pods if recommended by Vertical Pod Autoscaler
 type Updater interface {
 	// RunOnce represents single iteration in the main-loop of Updater
-	RunOnce()
+	RunOnce(context.Context)
 }
 
 type updater struct {
@@ -57,6 +58,7 @@ type updater struct {
 	evictionFactory         eviction.PodsEvictionRestrictionFactory
 	recommendationProcessor vpa_api_util.RecommendationProcessor
 	evictionAdmission       priority.PodEvictionAdmission
+	evictionRateLimiter     *rate.Limiter
 	selectorFetcher         target.VpaTargetSelectorFetcher
 }
 
@@ -75,12 +77,13 @@ func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clien
 		evictionFactory:         factory,
 		recommendationProcessor: recommendationProcessor,
 		evictionAdmission:       evictionAdmission,
+		evictionRateLimiter:     evictionRateLimiter,
 		selectorFetcher:         selectorFetcher,
 	}, nil
 }
 
 // RunOnce represents single iteration in the main-loop of Updater
-func (u *updater) RunOnce() {
+func (u *updater) RunOnce(ctx context.Context) {
 	timer := metrics_updater.NewExecutionTimer()
 
 	vpaList, err := u.vpaLister.List(labels.Everything())
@@ -141,6 +144,8 @@ func (u *updater) RunOnce() {
 	}
 	timer.ObserveStep("AdmissionInit")
 
+	klog.Warningf("Inspect %d vpa", len(controlledPods))
+
 	for vpa, livePods := range controlledPods {
 		evictionLimiter := u.evictionFactory.NewPodsEvictionRestriction(livePods)
 		podsForUpdate := u.getPodsUpdateOrder(filterNonEvictablePods(livePods, evictionLimiter), vpa)
@@ -149,7 +154,12 @@ func (u *updater) RunOnce() {
 			if !evictionLimiter.CanEvict(pod) {
 				continue
 			}
-			klog.V(2).Infof("evicting pod %v", pod.Name)
+			err := u.evictionRateLimiter.Wait(ctx)
+			if err != nil {
+				klog.Warningf("evicting pod %v failed: %v", pod.Name, err)
+				return
+			}
+			klog.Infof("evicting pod %v", pod.Name)
 			evictErr := evictionLimiter.Evict(pod, u.eventRecorder)
 			if evictErr != nil {
 				klog.Warningf("evicting pod %v failed: %v", pod.Name, evictErr)
@@ -164,10 +174,10 @@ func getRateLimiter(evictionRateLimit float64) *rate.Limiter {
 	var evictionRateLimiter *rate.Limiter
 	if evictionRateLimit == -1 || evictionRateLimit == 0 {
 		evictionRateLimiter = rate.NewLimiter(rate.Inf, 0)
-		klog.Info("Rate limit disabled")
+		klog.Warning("Rate limit disabled")
 	} else {
-		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1.0/evictionRateLimit*float64(time.Second))), 0)
-		klog.Infof("Create a rate limit with %f rate equivalent to 1 pod every %+v", evictionRateLimit, time.Duration(1.0/evictionRateLimit*float64(time.Second)))
+		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1.0/evictionRateLimit*float64(time.Second))), 1)
+		klog.Warningf("Create a rate limit with %f rate equivalent to 1 pod every %+v", evictionRateLimit, time.Duration(1.0/evictionRateLimit*float64(time.Second)))
 	}
 	return evictionRateLimiter
 }

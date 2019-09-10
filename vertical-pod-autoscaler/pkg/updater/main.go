@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"time"
 
@@ -81,7 +82,10 @@ func main() {
 	}
 	ticker := time.Tick(*updaterInterval)
 	for range ticker {
-		updater.RunOnce()
+		ctx, cancel := context.WithTimeout(context.Background(), *updaterInterval)
+		updater.RunOnce(ctx)
+		cancel()
 		healthCheck.UpdateLastActivity()
+
 	}
 }

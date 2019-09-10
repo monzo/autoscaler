@@ -146,6 +146,7 @@ func (calc *UpdatePriorityCalculator) getUpdatePriority(pod *apiv1.Pod, recommen
 	for _, podContainer := range pod.Spec.Containers {
 		recommendedRequest := vpa_api_util.GetRecommendationForContainer(podContainer.Name, recommendation)
 		if recommendedRequest == nil {
+			klog.Warningf("Cannot find recommeneded request for container %s", podContainer.Name)
 			continue
 		}
 		for resourceName, recommended := range recommendedRequest.Target {
@@ -177,7 +178,7 @@ func (calc *UpdatePriorityCalculator) getUpdatePriority(pod *apiv1.Pod, recommen
 		resourceDiff += math.Abs(totalRequest-float64(totalRecommended)) / totalRequest
 	}
 	return podPriority{
-		pod:                     pod,
+		pod: pod,
 		outsideRecommendedRange: outsideRecommendedRange,
 		scaleUp:                 scaleUp,
 		resourceDiff:            resourceDiff,
