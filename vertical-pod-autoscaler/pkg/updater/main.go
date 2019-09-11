@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/limitrange"
 	"time"
@@ -44,6 +45,12 @@ var (
 
 	evictionToleranceFraction = flag.Float64("eviction-tolerance", 0.5,
 		`Fraction of replica count that can be evicted for update, if more than one pod can be evicted.`)
+
+	evictionRateLimit = flag.Float64("eviction-rate-limit", -1, `
+		Number of pods that can be evicted per seconds.`)
+
+	evictionRateLimitBurst = flag.Int("eviction-rate-limit-burst", 1,
+		`Burst of pods that can be evicted.`)
 
 	address = flag.String("address", ":8943", "The address to expose Prometheus metrics.")
 )
@@ -79,13 +86,15 @@ func main() {
 		limitRangeCalculator = limitrange.NewNoopLimitsCalculator()
 	}
 	// TODO: use SharedInformerFactory in updater
-	updater, err := updater.NewUpdater(kubeClient, vpaClient, *minReplicas, *evictionToleranceFraction, vpa_api_util.NewCappingRecommendationProcessor(limitRangeCalculator), nil, targetSelectorFetcher)
+	updater, err := updater.NewUpdater(kubeClient, vpaClient, *minReplicas, *evictionRateLimit, *evictionRateLimitBurst, *evictionToleranceFraction, vpa_api_util.NewCappingRecommendationProcessor(limitRangeCalculator), nil, targetSelectorFetcher)
 	if err != nil {
 		klog.Fatalf("Failed to create updater: %v", err)
 	}
 	ticker := time.Tick(*updaterInterval)
 	for range ticker {
-		updater.RunOnce()
+		ctx, cancel := context.WithTimeout(context.Background(), *updaterInterval)
+		updater.RunOnce(ctx)
+		cancel()
 		healthCheck.UpdateLastActivity()
 	}
 }

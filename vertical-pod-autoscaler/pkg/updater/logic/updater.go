@@ -17,9 +17,11 @@ limitations under the License.
 package logic
 
 import (
+	"context"
 	"fmt"
 	"time"
 
+	"golang.org/x/time/rate"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -44,7 +46,7 @@ import (
 // Updater performs updates on pods if recommended by Vertical Pod Autoscaler
 type Updater interface {
 	// RunOnce represents single iteration in the main-loop of Updater
-	RunOnce()
+	RunOnce(context.Context)
 }
 
 type updater struct {
@@ -54,11 +56,13 @@ type updater struct {
 	evictionFactory         eviction.PodsEvictionRestrictionFactory
 	recommendationProcessor vpa_api_util.RecommendationProcessor
 	evictionAdmission       priority.PodEvictionAdmission
+	evictionRateLimiter     *rate.Limiter
 	selectorFetcher         target.VpaTargetSelectorFetcher
 }
 
 // NewUpdater creates Updater with given configuration
-func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clientset, minReplicasForEvicition int, evictionToleranceFraction float64, recommendationProcessor vpa_api_util.RecommendationProcessor, evictionAdmission priority.PodEvictionAdmission, selectorFetcher target.VpaTargetSelectorFetcher) (Updater, error) {
+func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clientset, minReplicasForEvicition int, evictionRateLimit float64, evictionRateLimitBurst int, evictionToleranceFraction float64, recommendationProcessor vpa_api_util.RecommendationProcessor, evictionAdmission priority.PodEvictionAdmission, selectorFetcher target.VpaTargetSelectorFetcher) (Updater, error) {
+	evictionRateLimiter := getRateLimiter(evictionRateLimit, evictionRateLimitBurst)
 	factory, err := eviction.NewPodsEvictionRestrictionFactory(kubeClient, minReplicasForEvicition, evictionToleranceFraction)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create eviction restriction factory: %v", err)
@@ -69,13 +73,14 @@ func NewUpdater(kubeClient kube_client.Interface, vpaClient *vpa_clientset.Clien
 		eventRecorder:           newEventRecorder(kubeClient),
 		evictionFactory:         factory,
 		recommendationProcessor: recommendationProcessor,
+		evictionRateLimiter:     evictionRateLimiter,
 		evictionAdmission:       evictionAdmission,
 		selectorFetcher:         selectorFetcher,
 	}, nil
 }
 
 // RunOnce represents single iteration in the main-loop of Updater
-func (u *updater) RunOnce() {
+func (u *updater) RunOnce(ctx context.Context) {
 	timer := metrics_updater.NewExecutionTimer()
 
 	vpaList, err := u.vpaLister.List(labels.Everything())
@@ -144,6 +149,11 @@ func (u *updater) RunOnce() {
 			if !evictionLimiter.CanEvict(pod) {
 				continue
 			}
+			err := u.evictionRateLimiter.Wait(ctx)
+			if err != nil {
+				klog.Warningf("evicting pod %v failed: %v", pod.Name, err)
+				return
+			}
 			klog.V(2).Infof("evicting pod %v", pod.Name)
 			evictErr := evictionLimiter.Evict(pod, u.eventRecorder)
 			if evictErr != nil {
@@ -153,6 +163,17 @@ func (u *updater) RunOnce() {
 	}
 	timer.ObserveStep("EvictPods")
 	timer.ObserveTotal()
+}
+
+func getRateLimiter(evictionRateLimit float64, evictionRateLimitBurst int) *rate.Limiter {
+	var evictionRateLimiter *rate.Limiter
+	if evictionRateLimit == -1 || evictionRateLimit == 0 {
+		evictionRateLimiter = rate.NewLimiter(rate.Inf, evictionRateLimitBurst)
+		klog.Warning("Rate limit disabled")
+	} else {
+		evictionRateLimiter = rate.NewLimiter(rate.Every(time.Duration(1.0/evictionRateLimit*float64(time.Second))), evictionRateLimitBurst)
+	}
+	return evictionRateLimiter
 }
 
 // getPodsUpdateOrder returns list of pods that should be updated ordered by update priority
