@@ -326,8 +326,7 @@ func (feeder *clusterStateFeeder) LoadVPAs() {
 			// Successfully added VPA to the model.
 			vpaKeys[vpaID] = true
 
-			legacySelector, _ := feeder.legacySelectorFetcher.Fetch(vpaCRD)
-			feeder.clusterState.Vpas[vpaID].IsV1Beta1API = legacySelector != nil
+			feeder.clusterState.Vpas[vpaID].IsV1Beta1API = false
 
 			for _, condition := range conditions {
 				if condition.delete {
@@ -454,21 +453,11 @@ func (feeder *clusterStateFeeder) validateTargetRef(vpa *vpa_types.VerticalPodAu
 }
 
 func (feeder *clusterStateFeeder) getSelector(vpa *vpa_types.VerticalPodAutoscaler) (labels.Selector, []condition) {
-	legacySelector, fetchLegacyErr := feeder.legacySelectorFetcher.Fetch(vpa)
-	if fetchLegacyErr != nil {
-		klog.Errorf("Error while fetching legacy selector. Reason: %+v", fetchLegacyErr)
-	}
 	selector, fetchErr := feeder.selectorFetcher.Fetch(vpa)
 	if fetchErr != nil {
 		klog.Errorf("Cannot get target selector from VPA's targetRef. Reason: %+v", fetchErr)
 	}
 	if selector != nil {
-		if legacySelector != nil {
-			return labels.Nothing(), []condition{
-				{conditionType: vpa_types.ConfigUnsupported, delete: false, message: "Both targetRef and label selector defined. Please remove label selector"},
-				{conditionType: vpa_types.ConfigDeprecated, delete: true},
-			}
-		}
 		validTargetRef, unsupportedCondition := feeder.validateTargetRef(vpa)
 		if !validTargetRef {
 			return labels.Nothing(), []condition{
@@ -478,12 +467,6 @@ func (feeder *clusterStateFeeder) getSelector(vpa *vpa_types.VerticalPodAutoscal
 		}
 		return selector, []condition{
 			{conditionType: vpa_types.ConfigUnsupported, delete: true},
-			{conditionType: vpa_types.ConfigDeprecated, delete: true},
-		}
-	}
-	if legacySelector != nil {
-		return labels.Nothing(), []condition{
-			{conditionType: vpa_types.ConfigUnsupported, delete: false, message: "Label selector is no longer supported, please migrate to targetRef"},
 			{conditionType: vpa_types.ConfigDeprecated, delete: true},
 		}
 	}

@@ -18,13 +18,14 @@ package input
 
 import (
 	"fmt"
-	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/controller_fetcher"
 	"testing"
+
+	controllerfetcher "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/controller_fetcher"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
-	"k8s.io/api/autoscaling/v1"
+	v1 "k8s.io/api/autoscaling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	vpa_types "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
@@ -101,14 +102,6 @@ func TestLegacySelector(t *testing.T) {
 			expectedConfigDeprecated:  nil,
 		},
 		{
-			name:                      "legacy selector no ref",
-			legacySelector:            parseLabelSelector("app = test"),
-			selector:                  nil,
-			fetchSelectorError:        fmt.Errorf("targetRef not defined"),
-			expectedSelector:          labels.Nothing(),
-			expectedConfigUnsupported: &unsupportedConditionNoLongerSupported,
-			expectedConfigDeprecated:  nil,
-		}, {
 			name: "targetRef selector",
 			// the only valid option since v1beta1 removal
 			legacySelector:     nil,
@@ -129,14 +122,6 @@ func TestLegacySelector(t *testing.T) {
 			},
 			expectedSelector:          parseLabelSelector("app = test"),
 			expectedConfigUnsupported: nil,
-			expectedConfigDeprecated:  nil,
-		}, {
-			name:                      "new and legacy selector",
-			legacySelector:            parseLabelSelector("app = test1"),
-			selector:                  parseLabelSelector("app = test2"),
-			fetchSelectorError:        nil,
-			expectedSelector:          labels.Nothing(),
-			expectedConfigUnsupported: &unsupportedConditionBothDefined,
 			expectedConfigDeprecated:  nil,
 		},
 		{
@@ -236,10 +221,6 @@ func TestLegacySelector(t *testing.T) {
 				},
 			}
 
-			// legacyTargetSelectorFetcher is called twice:
-			// - one time to determine ultimate selector
-			// - one time to check if object uses deprecated API
-			legacyTargetSelectorFetcher.EXPECT().Fetch(vpa).Times(2).Return(tc.legacySelector, nil)
 			targetSelectorFetcher.EXPECT().Fetch(vpa).Return(tc.selector, tc.fetchSelectorError)
 			clusterStateFeeder.LoadVPAs()
 
