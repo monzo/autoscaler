@@ -29,7 +29,6 @@ import (
 var (
 	OOMBumpUpRatio = flag.Float64("oom-bump-up-ratio", 1.2, `Specifies how much memory will be added after observing OOM`)
 	OOMMinBumpUpMb = flag.Float64("oom-min-bump-up",  100, `Specifies minimal increase of memory in MB after observing OOM`)
-	OOMMinBumpUp float64 = *OOMMinBumpUpMb * 1024 * 1024
 )
 
 // ContainerUsageSample is a measure of resource usage of a container over some
@@ -195,7 +194,7 @@ func (container *ContainerState) RecordOOM(timestamp time.Time, requestedMemory 
 	// Get max of the request and the recent usage-based memory peak.
 	// Omitting oomPeak here to protect against recommendation running too high on subsequent OOMs.
 	memoryUsed := ResourceAmountMax(requestedMemory, container.memoryPeak)
-	memoryNeeded := ResourceAmountMax(memoryUsed+MemoryAmountFromBytes(OOMMinBumpUp),
+	memoryNeeded := ResourceAmountMax(memoryUsed+MemoryAmountFromBytes(*OOMMinBumpUpMb * 1024 * 1024),
 		ScaleResource(memoryUsed, *OOMBumpUpRatio))
 
 	klog.Infof("Recording OOM event. Memory used: %v, Memory needed: %v", memoryUsed, memoryNeeded)
