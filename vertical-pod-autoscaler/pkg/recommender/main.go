@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/autoscaler/vertical-pod-autoscaler/common"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/history"
+	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/model"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/routines"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/metrics"
 	metrics_quality "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/metrics/quality"
@@ -50,7 +51,11 @@ var (
 	ctrNamespaceLabel   = flag.String("container-namespace-label", "namespace", `Label name to look for container names`)
 	ctrPodNameLabel     = flag.String("container-pod-name-label", "pod_name", `Label name to look for container names`)
 	ctrNameLabel        = flag.String("container-name-label", "name", `Label name to look for container names`)
+
+	oomBumpUpRatio = flag.Float64("oom-bump-up-ratio", 1.2, `Specifies how much memory will be added after observing OOM`)
+	oomMinBumpUpMb = flag.Float64("oom-min-bump-up",  100, `Specifies minimal increase of memory in MB after observing OOM`)
 )
+
 
 func main() {
 	klog.InitFlags(nil)
@@ -58,6 +63,9 @@ func main() {
 	klog.V(1).Infof("Vertical Pod Autoscaler %s Recommender", common.VerticalPodAutoscalerVersion)
 
 	config := createKubeConfig(float32(*kubeApiQps), int(*kubeApiBurst))
+
+	model.OOMBumpUpRatio = *oomBumpUpRatio
+	model.OOMMinBumpUp = *oomMinBumpUpMb * 1024 * 1024 // convert to bytes
 
 	healthCheck := metrics.NewHealthCheck(*metricsFetcherInterval*5, true)
 	metrics.Initialize(*address, healthCheck)

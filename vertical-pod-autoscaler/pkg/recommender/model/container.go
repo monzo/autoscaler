@@ -25,7 +25,7 @@ import (
 	"k8s.io/klog"
 )
 
-const (
+var (
 	// OOMBumpUpRatio specifies how much memory will be added after observing OOM.
 	OOMBumpUpRatio float64 = 1.2
 	// OOMMinBumpUp specifies minimal increase of memory after observing OOM.
@@ -197,6 +197,8 @@ func (container *ContainerState) RecordOOM(timestamp time.Time, requestedMemory 
 	memoryUsed := ResourceAmountMax(requestedMemory, container.memoryPeak)
 	memoryNeeded := ResourceAmountMax(memoryUsed+MemoryAmountFromBytes(OOMMinBumpUp),
 		ScaleResource(memoryUsed, OOMBumpUpRatio))
+
+	klog.Infof("Recording OOM event. Memory used: %v, Memory needed: %v", memoryUsed, memoryNeeded)
 
 	oomMemorySample := ContainerUsageSample{
 		MeasureStart: timestamp,
