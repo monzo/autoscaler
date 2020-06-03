@@ -27,13 +27,9 @@ import (
 )
 
 var (
-	// OOMBumpUpRatio specifies how much memory will be added after observing OOM.
 	OOMBumpUpRatio = flag.Float64("oom-bump-up-ratio", 1.2, `Specifies how much memory will be added after observing OOM`)
-
-	// OOMMinBumpUp specifies minimal increase of memory after observing OOM.
 	OOMMinBumpUpMb = flag.Float64("oom-min-bump-up",  100, `Specifies minimal increase of memory in MB after observing OOM`)
-
-	OOMMinBumpUp float64 = *OOMMinBumpUpMb * 1024 * 1024 // 100MB
+	OOMMinBumpUp float64 = *OOMMinBumpUpMb * 1024 * 1024
 )
 
 // ContainerUsageSample is a measure of resource usage of a container over some
