@@ -17,6 +17,7 @@ limitations under the License.
 package model
 
 import (
+	"flag"
 	"fmt"
 	"time"
 
@@ -27,9 +28,12 @@ import (
 
 var (
 	// OOMBumpUpRatio specifies how much memory will be added after observing OOM.
-	OOMBumpUpRatio float64 = 1.2
+	OOMBumpUpRatio = flag.Float64("oom-bump-up-ratio", 1.2, `Specifies how much memory will be added after observing OOM`)
+
 	// OOMMinBumpUp specifies minimal increase of memory after observing OOM.
-	OOMMinBumpUp float64 = 100 * 1024 * 1024 // 100MB
+	OOMMinBumpUpMb = flag.Float64("oom-min-bump-up",  100, `Specifies minimal increase of memory in MB after observing OOM`)
+
+	OOMMinBumpUp float64 = *OOMMinBumpUpMb * 1024 * 1024 // 100MB
 )
 
 // ContainerUsageSample is a measure of resource usage of a container over some
@@ -196,7 +200,7 @@ func (container *ContainerState) RecordOOM(timestamp time.Time, requestedMemory 
 	// Omitting oomPeak here to protect against recommendation running too high on subsequent OOMs.
 	memoryUsed := ResourceAmountMax(requestedMemory, container.memoryPeak)
 	memoryNeeded := ResourceAmountMax(memoryUsed+MemoryAmountFromBytes(OOMMinBumpUp),
-		ScaleResource(memoryUsed, OOMBumpUpRatio))
+		ScaleResource(memoryUsed, *OOMBumpUpRatio))
 
 	klog.Infof("Recording OOM event. Memory used: %v, Memory needed: %v", memoryUsed, memoryNeeded)
 
