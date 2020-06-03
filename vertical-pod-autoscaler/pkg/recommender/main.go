@@ -52,6 +52,7 @@ var (
 	ctrNameLabel        = flag.String("container-name-label", "name", `Label name to look for container names`)
 )
 
+
 func main() {
 	klog.InitFlags(nil)
 	kube_flag.InitFlags()
