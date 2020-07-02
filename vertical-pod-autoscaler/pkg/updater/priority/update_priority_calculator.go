@@ -115,7 +115,9 @@ func (calc *UpdatePriorityCalculator) AddPod(pod *apiv1.Pod, recommendation *vpa
 			return
 		}
 	}
-	klog.V(2).Infof("pod accepted for update %v with priority %v", pod.Name, updatePriority.resourceDiff)
+
+	klog.V(2).Infof("pod accepted for update %v (OutsideRecommended: %v, ScaleUp: %v, Priority: %v)",
+		pod.Name, updatePriority.outsideRecommendedRange,  updatePriority.scaleUp, updatePriority.resourceDiff)
 	calc.pods = append(calc.pods, updatePriority)
 }
 
@@ -160,6 +162,9 @@ func (calc *UpdatePriorityCalculator) getUpdatePriority(pod *apiv1.Pod, recommen
 				if (hasLowerBound && request.Cmp(lowerBound) < 0) ||
 					(hasUpperBound && request.Cmp(upperBound) > 0) {
 					outsideRecommendedRange = true
+					klog.V(2).Infof("pod %s: %s for %s is outside recommended range. " +
+						"(Lower=%v Upper=%v Request=%v)", pod.Name, resourceName, podContainer.Name,
+						lowerBound.MilliValue(), upperBound.MilliValue(), request.MilliValue())
 				}
 			} else {
 				// Note: if the request is not specified, the container will use the
