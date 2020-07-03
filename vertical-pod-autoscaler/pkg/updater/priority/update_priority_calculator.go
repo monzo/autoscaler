@@ -40,6 +40,9 @@ var (
 	evictAfterOOMThreshold = flag.Duration("evict-after-oom-treshold", 10*time.Minute,
 		`Evict pod that has only one container and it OOMed in less than
 		evict-after-oom-treshold since start.`)
+
+	onlyScaleUp = flag.Bool("only-scale-up", false,
+		`Only evict pods when it'll result in them being scaled up'`)
 )
 
 // UpdatePriorityCalculator is responsible for prioritizing updates on pods.
@@ -116,8 +119,16 @@ func (calc *UpdatePriorityCalculator) AddPod(pod *apiv1.Pod, recommendation *vpa
 		}
 	}
 
-	klog.V(2).Infof("pod accepted for update %v (OutsideRecommended: %v, ScaleUp: %v, Priority: %v)",
-		pod.Name, updatePriority.outsideRecommendedRange,  updatePriority.scaleUp, updatePriority.resourceDiff)
+	// If we've configured onlyScaleUp mode, then ignore changes which aren't scale ups
+	if !updatePriority.scaleUp && *onlyScaleUp {
+		klog.V(2).Infof("pod not accepted for update as it would scale down %v (OutsideRecommended: %v, ScaleUp: %v, Priority: %v, ScaleUpOnlyMode: %v)",
+			pod.Name, updatePriority.outsideRecommendedRange,  updatePriority.scaleUp, updatePriority.resourceDiff, *onlyScaleUp)
+		return
+	}
+
+	klog.V(2).Infof("pod accepted for update %v (OutsideRecommended: %v, ScaleUp: %v, Priority: %v, ScaleUpOnlyMode: %v)",
+		pod.Name, updatePriority.outsideRecommendedRange,  updatePriority.scaleUp, updatePriority.resourceDiff, *onlyScaleUp)
+
 	calc.pods = append(calc.pods, updatePriority)
 }
 
