@@ -1,0 +1,770 @@
+From 4e07e1eac160759c9c515aa0c7d2db137dd7b06e Mon Sep 17 00:00:00 2001
+From: Beata Skiba <bskiba@google.com>
+Date: Mon, 10 Jun 2019 16:53:27 +0200
+Subject: [PATCH] Remove legacy selector fetcher
+
+---
+ .../pkg/admission-controller/main.go          |   5 +-
+ .../pkg/recommender/input/cluster_feeder.go   | 109 +++++------
+ .../recommender/input/cluster_feeder_test.go  |  57 ++----
+ .../pkg/target/composite_fetcher.go           |  49 -----
+ vertical-pod-autoscaler/pkg/target/fetcher.go |   4 +-
+ .../pkg/target/v1beta1_fetcher.go             |  87 ---------
+ .../pkg/target/v1beta1_fetcher_test.go        | 178 ------------------
+ vertical-pod-autoscaler/pkg/updater/main.go   |   7 +-
+ 8 files changed, 60 insertions(+), 436 deletions(-)
+ delete mode 100644 vertical-pod-autoscaler/pkg/target/composite_fetcher.go
+ delete mode 100644 vertical-pod-autoscaler/pkg/target/v1beta1_fetcher.go
+ delete mode 100644 vertical-pod-autoscaler/pkg/target/v1beta1_fetcher_test.go
+
+diff --git a/vertical-pod-autoscaler/pkg/admission-controller/main.go b/vertical-pod-autoscaler/pkg/admission-controller/main.go
+index 5b08cd9c36..8d6bdc3cb6 100644
+--- a/vertical-pod-autoscaler/pkg/admission-controller/main.go
++++ b/vertical-pod-autoscaler/pkg/admission-controller/main.go
+@@ -78,10 +78,7 @@ func main() {
+ 	vpaLister := vpa_api_util.NewAllVpasLister(vpaClient, make(chan struct{}))
+ 	kubeClient := kube_client.NewForConfigOrDie(config)
+ 	factory := informers.NewSharedInformerFactory(kubeClient, defaultResyncPeriod)
+-	targetSelectorFetcher := target.NewCompositeTargetSelectorFetcher(
+-		target.NewVpaTargetSelectorFetcher(config, kubeClient, factory),
+-		target.NewBeta1TargetSelectorFetcher(config),
+-	)
++	targetSelectorFetcher := target.NewVpaTargetSelectorFetcher(config, kubeClient, factory)
+ 	podPreprocessor := logic.NewDefaultPodPreProcessor()
+ 	vpaPreprocessor := logic.NewDefaultVpaPreProcessor()
+ 	var limitRangeCalculator limitrange.LimitRangeCalculator
+diff --git a/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder.go b/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder.go
+index 52f8795c1d..985efc5956 100644
+--- a/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder.go
++++ b/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder.go
+@@ -29,7 +29,7 @@ import (
+ 	vpa_clientset "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned"
+ 	vpa_api "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned/typed/autoscaling.k8s.io/v1beta2"
+ 	vpa_lister "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/listers/autoscaling.k8s.io/v1beta2"
+-	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/controller_fetcher"
++	controllerfetcher "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/controller_fetcher"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/history"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/metrics"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/oom"
+@@ -75,33 +75,31 @@ type ClusterStateFeeder interface {
+ 
+ // ClusterStateFeederFactory makes instances of ClusterStateFeeder.
+ type ClusterStateFeederFactory struct {
+-	ClusterState          *model.ClusterState
+-	KubeClient            kube_client.Interface
+-	MetricsClient         metrics.MetricsClient
+-	VpaCheckpointClient   vpa_api.VerticalPodAutoscalerCheckpointsGetter
+-	VpaLister             vpa_lister.VerticalPodAutoscalerLister
+-	PodLister             v1lister.PodLister
+-	OOMObserver           oom.Observer
+-	LegacySelectorFetcher target.VpaTargetSelectorFetcher
+-	SelectorFetcher       target.VpaTargetSelectorFetcher
+-	MemorySaveMode        bool
+-	ControllerFetcher     controllerfetcher.ControllerFetcher
++	ClusterState        *model.ClusterState
++	KubeClient          kube_client.Interface
++	MetricsClient       metrics.MetricsClient
++	VpaCheckpointClient vpa_api.VerticalPodAutoscalerCheckpointsGetter
++	VpaLister           vpa_lister.VerticalPodAutoscalerLister
++	PodLister           v1lister.PodLister
++	OOMObserver         oom.Observer
++	SelectorFetcher     target.VpaTargetSelectorFetcher
++	MemorySaveMode      bool
++	ControllerFetcher   controllerfetcher.ControllerFetcher
+ }
+ 
+ // Make creates new ClusterStateFeeder with internal data providers, based on kube client.
+ func (m ClusterStateFeederFactory) Make() *clusterStateFeeder {
+ 	return &clusterStateFeeder{
+-		coreClient:            m.KubeClient.CoreV1(),
+-		metricsClient:         m.MetricsClient,
+-		oomChan:               m.OOMObserver.GetObservedOomsChannel(),
+-		vpaCheckpointClient:   m.VpaCheckpointClient,
+-		vpaLister:             m.VpaLister,
+-		clusterState:          m.ClusterState,
+-		specClient:            spec.NewSpecClient(m.PodLister),
+-		legacySelectorFetcher: m.LegacySelectorFetcher,
+-		selectorFetcher:       m.SelectorFetcher,
+-		memorySaveMode:        m.MemorySaveMode,
+-		controllerFetcher:     m.ControllerFetcher,
++		coreClient:          m.KubeClient.CoreV1(),
++		metricsClient:       m.MetricsClient,
++		oomChan:             m.OOMObserver.GetObservedOomsChannel(),
++		vpaCheckpointClient: m.VpaCheckpointClient,
++		vpaLister:           m.VpaLister,
++		clusterState:        m.ClusterState,
++		specClient:          spec.NewSpecClient(m.PodLister),
++		selectorFetcher:     m.SelectorFetcher,
++		memorySaveMode:      m.MemorySaveMode,
++		controllerFetcher:   m.ControllerFetcher,
+ 	}
+ }
+ 
+@@ -113,17 +111,16 @@ func NewClusterStateFeeder(config *rest.Config, clusterState *model.ClusterState
+ 	factory := informers.NewSharedInformerFactory(kubeClient, defaultResyncPeriod)
+ 	controllerFetcher := controllerfetcher.NewControllerFetcher(config, kubeClient, factory)
+ 	return ClusterStateFeederFactory{
+-		PodLister:             podLister,
+-		OOMObserver:           oomObserver,
+-		KubeClient:            kubeClient,
+-		MetricsClient:         newMetricsClient(config),
+-		VpaCheckpointClient:   vpa_clientset.NewForConfigOrDie(config).AutoscalingV1beta2(),
+-		VpaLister:             vpa_api_util.NewAllVpasLister(vpa_clientset.NewForConfigOrDie(config), make(chan struct{})),
+-		ClusterState:          clusterState,
+-		LegacySelectorFetcher: target.NewBeta1TargetSelectorFetcher(config),
+-		SelectorFetcher:       target.NewVpaTargetSelectorFetcher(config, kubeClient, factory),
+-		MemorySaveMode:        memorySave,
+-		ControllerFetcher:     controllerFetcher,
++		PodLister:           podLister,
++		OOMObserver:         oomObserver,
++		KubeClient:          kubeClient,
++		MetricsClient:       newMetricsClient(config),
++		VpaCheckpointClient: vpa_clientset.NewForConfigOrDie(config).AutoscalingV1beta2(),
++		VpaLister:           vpa_api_util.NewAllVpasLister(vpa_clientset.NewForConfigOrDie(config), make(chan struct{})),
++		ClusterState:        clusterState,
++		SelectorFetcher:     target.NewVpaTargetSelectorFetcher(config, kubeClient, factory),
++		MemorySaveMode:      memorySave,
++		ControllerFetcher:   controllerFetcher,
+ 	}.Make()
+ }
+ 
+@@ -193,17 +190,16 @@ func NewPodListerAndOOMObserver(kubeClient kube_client.Interface) (v1lister.PodL
+ }
+ 
+ type clusterStateFeeder struct {
+-	coreClient            corev1.CoreV1Interface
+-	specClient            spec.SpecClient
+-	metricsClient         metrics.MetricsClient
+-	oomChan               <-chan oom.OomInfo
+-	vpaCheckpointClient   vpa_api.VerticalPodAutoscalerCheckpointsGetter
+-	vpaLister             vpa_lister.VerticalPodAutoscalerLister
+-	clusterState          *model.ClusterState
+-	legacySelectorFetcher target.VpaTargetSelectorFetcher
+-	selectorFetcher       target.VpaTargetSelectorFetcher
+-	memorySaveMode        bool
+-	controllerFetcher     controllerfetcher.ControllerFetcher
++	coreClient          corev1.CoreV1Interface
++	specClient          spec.SpecClient
++	metricsClient       metrics.MetricsClient
++	oomChan             <-chan oom.OomInfo
++	vpaCheckpointClient vpa_api.VerticalPodAutoscalerCheckpointsGetter
++	vpaLister           vpa_lister.VerticalPodAutoscalerLister
++	clusterState        *model.ClusterState
++	selectorFetcher     target.VpaTargetSelectorFetcher
++	memorySaveMode      bool
++	controllerFetcher   controllerfetcher.ControllerFetcher
+ }
+ 
+ func (feeder *clusterStateFeeder) InitFromHistoryProvider(historyProvider history.HistoryProvider) {
+@@ -330,9 +326,6 @@ func (feeder *clusterStateFeeder) LoadVPAs() {
+ 			// Successfully added VPA to the model.
+ 			vpaKeys[vpaID] = true
+ 
+-			legacySelector, _ := feeder.legacySelectorFetcher.Fetch(vpaCRD)
+-			feeder.clusterState.Vpas[vpaID].IsV1Beta1API = legacySelector != nil
+-
+ 			for _, condition := range conditions {
+ 				if condition.delete {
+ 					delete(feeder.clusterState.Vpas[vpaID].Conditions, condition.conditionType)
+@@ -471,21 +464,8 @@ func (feeder *clusterStateFeeder) validateTargetRef(vpa *vpa_types.VerticalPodAu
+ }
+ 
+ func (feeder *clusterStateFeeder) getSelector(vpa *vpa_types.VerticalPodAutoscaler) (labels.Selector, []condition) {
+-	legacySelector, fetchLegacyErr := feeder.legacySelectorFetcher.Fetch(vpa)
+-	if fetchLegacyErr != nil {
+-		klog.Errorf("Error while fetching legacy selector. Reason: %+v", fetchLegacyErr)
+-	}
+ 	selector, fetchErr := feeder.selectorFetcher.Fetch(vpa)
+-	if fetchErr != nil {
+-		klog.Errorf("Cannot get target selector from VPA's targetRef. Reason: %+v", fetchErr)
+-	}
+ 	if selector != nil {
+-		if legacySelector != nil {
+-			return labels.Nothing(), []condition{
+-				{conditionType: vpa_types.ConfigUnsupported, delete: false, message: "Both targetRef and label selector defined. Please remove label selector"},
+-				{conditionType: vpa_types.ConfigDeprecated, delete: true},
+-			}
+-		}
+ 		validTargetRef, unsupportedCondition := feeder.validateTargetRef(vpa)
+ 		if !validTargetRef {
+ 			return labels.Nothing(), []condition{
+@@ -498,14 +478,9 @@ func (feeder *clusterStateFeeder) getSelector(vpa *vpa_types.VerticalPodAutoscal
+ 			{conditionType: vpa_types.ConfigDeprecated, delete: true},
+ 		}
+ 	}
+-	if legacySelector != nil {
+-		return labels.Nothing(), []condition{
+-			{conditionType: vpa_types.ConfigUnsupported, delete: false, message: "Label selector is no longer supported, please migrate to targetRef"},
+-			{conditionType: vpa_types.ConfigDeprecated, delete: true},
+-		}
+-	}
+ 	msg := "Cannot read targetRef"
+ 	if fetchErr != nil {
++		klog.Errorf("Cannot get target selector from VPA's targetRef. Reason: %+v", fetchErr)
+ 		msg = fmt.Sprintf("Cannot read targetRef. Reason: %s", fetchErr.Error())
+ 	}
+ 	return labels.Nothing(), []condition{
+diff --git a/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder_test.go b/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder_test.go
+index 9771ae3617..9a6a0dda5b 100644
+--- a/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder_test.go
++++ b/vertical-pod-autoscaler/pkg/recommender/input/cluster_feeder_test.go
+@@ -18,16 +18,16 @@ package input
+ 
+ import (
+ 	"fmt"
+-	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/controller_fetcher"
+ 	"testing"
+ 
+ 	"github.com/golang/mock/gomock"
+ 	"github.com/stretchr/testify/assert"
+ 
+-	"k8s.io/api/autoscaling/v1"
++	autoscalingv1 "k8s.io/api/autoscaling/v1"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/labels"
+ 	vpa_types "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
++	controllerfetcher "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/controller_fetcher"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/spec"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/model"
+ 	target_mock "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/target/mock"
+@@ -67,14 +67,13 @@ const (
+ 	apiVersion = "stardust"
+ )
+ 
+-func TestLegacySelector(t *testing.T) {
++func TestLoadPods(t *testing.T) {
+ 
+ 	type testCase struct {
+ 		name                      string
+-		legacySelector            labels.Selector
+ 		selector                  labels.Selector
+ 		fetchSelectorError        error
+-		targetRef                 *v1.CrossVersionObjectReference
++		targetRef                 *autoscalingv1.CrossVersionObjectReference
+ 		topLevelKey               *controllerfetcher.ControllerKeyWithAPIVersion
+ 		findTopLevelError         error
+ 		expectedSelector          labels.Selector
+@@ -85,7 +84,6 @@ func TestLegacySelector(t *testing.T) {
+ 	testCases := []testCase{
+ 		{
+ 			name:                      "no selector",
+-			legacySelector:            nil,
+ 			selector:                  nil,
+ 			fetchSelectorError:        fmt.Errorf("targetRef not defined"),
+ 			expectedSelector:          labels.Nothing(),
+@@ -94,7 +92,6 @@ func TestLegacySelector(t *testing.T) {
+ 		},
+ 		{
+ 			name:                      "also no selector but no error",
+-			legacySelector:            nil,
+ 			selector:                  nil,
+ 			fetchSelectorError:        nil,
+ 			expectedSelector:          labels.Nothing(),
+@@ -102,20 +99,10 @@ func TestLegacySelector(t *testing.T) {
+ 			expectedConfigDeprecated:  nil,
+ 		},
+ 		{
+-			name:                      "legacy selector no ref",
+-			legacySelector:            parseLabelSelector("app = test"),
+-			selector:                  nil,
+-			fetchSelectorError:        fmt.Errorf("targetRef not defined"),
+-			expectedSelector:          labels.Nothing(),
+-			expectedConfigUnsupported: &unsupportedConditionNoLongerSupported,
+-			expectedConfigDeprecated:  nil,
+-		}, {
+-			name: "targetRef selector",
+-			// the only valid option since v1beta1 removal
+-			legacySelector:     nil,
++			name:               "targetRef selector",
+ 			selector:           parseLabelSelector("app = test"),
+ 			fetchSelectorError: nil,
+-			targetRef: &v1.CrossVersionObjectReference{
++			targetRef: &autoscalingv1.CrossVersionObjectReference{
+ 				Kind:       kind,
+ 				Name:       name1,
+ 				APIVersion: apiVersion,
+@@ -131,22 +118,13 @@ func TestLegacySelector(t *testing.T) {
+ 			expectedSelector:          parseLabelSelector("app = test"),
+ 			expectedConfigUnsupported: nil,
+ 			expectedConfigDeprecated:  nil,
+-		}, {
+-			name:                      "new and legacy selector",
+-			legacySelector:            parseLabelSelector("app = test1"),
+-			selector:                  parseLabelSelector("app = test2"),
+-			fetchSelectorError:        nil,
+-			expectedSelector:          labels.Nothing(),
+-			expectedConfigUnsupported: &unsupportedConditionBothDefined,
+-			expectedConfigDeprecated:  nil,
+ 		},
+ 		{
+ 			name:               "can't decide if top-level-ref",
+-			legacySelector:     nil,
+ 			selector:           nil,
+ 			fetchSelectorError: nil,
+ 			expectedSelector:   labels.Nothing(),
+-			targetRef: &v1.CrossVersionObjectReference{
++			targetRef: &autoscalingv1.CrossVersionObjectReference{
+ 				Kind:       kind,
+ 				Name:       name1,
+ 				APIVersion: apiVersion,
+@@ -155,11 +133,10 @@ func TestLegacySelector(t *testing.T) {
+ 		},
+ 		{
+ 			name:               "non-top-level targetRef",
+-			legacySelector:     nil,
+ 			selector:           parseLabelSelector("app = test"),
+ 			fetchSelectorError: nil,
+ 			expectedSelector:   labels.Nothing(),
+-			targetRef: &v1.CrossVersionObjectReference{
++			targetRef: &autoscalingv1.CrossVersionObjectReference{
+ 				Kind:       kind,
+ 				Name:       name1,
+ 				APIVersion: apiVersion,
+@@ -176,11 +153,10 @@ func TestLegacySelector(t *testing.T) {
+ 		},
+ 		{
+ 			name:               "error checking if top-level-ref",
+-			legacySelector:     nil,
+ 			selector:           parseLabelSelector("app = test"),
+ 			fetchSelectorError: nil,
+ 			expectedSelector:   labels.Nothing(),
+-			targetRef: &v1.CrossVersionObjectReference{
++			targetRef: &autoscalingv1.CrossVersionObjectReference{
+ 				Kind:       "doestar",
+ 				Name:       "doseph-doestar",
+ 				APIVersion: "taxonomy",
+@@ -190,11 +166,10 @@ func TestLegacySelector(t *testing.T) {
+ 		},
+ 		{
+ 			name:               "top-level target ref",
+-			legacySelector:     nil,
+ 			selector:           parseLabelSelector("app = test"),
+ 			fetchSelectorError: nil,
+ 			expectedSelector:   parseLabelSelector("app = test"),
+-			targetRef: &v1.CrossVersionObjectReference{
++			targetRef: &autoscalingv1.CrossVersionObjectReference{
+ 				Kind:       kind,
+ 				Name:       name1,
+ 				APIVersion: apiVersion,
+@@ -221,26 +196,20 @@ func TestLegacySelector(t *testing.T) {
+ 			vpaLister := &test.VerticalPodAutoscalerListerMock{}
+ 			vpaLister.On("List").Return([]*vpa_types.VerticalPodAutoscaler{vpa}, nil)
+ 
+-			legacyTargetSelectorFetcher := target_mock.NewMockVpaTargetSelectorFetcher(ctrl)
+ 			targetSelectorFetcher := target_mock.NewMockVpaTargetSelectorFetcher(ctrl)
+ 
+ 			clusterState := model.NewClusterState()
+ 
+ 			clusterStateFeeder := clusterStateFeeder{
+-				vpaLister:             vpaLister,
+-				clusterState:          clusterState,
+-				legacySelectorFetcher: legacyTargetSelectorFetcher,
+-				selectorFetcher:       targetSelectorFetcher,
++				vpaLister:       vpaLister,
++				clusterState:    clusterState,
++				selectorFetcher: targetSelectorFetcher,
+ 				controllerFetcher: &fakeControllerFetcher{
+ 					key: tc.topLevelKey,
+ 					err: tc.findTopLevelError,
+ 				},
+ 			}
+ 
+-			// legacyTargetSelectorFetcher is called twice:
+-			// - one time to determine ultimate selector
+-			// - one time to check if object uses deprecated API
+-			legacyTargetSelectorFetcher.EXPECT().Fetch(vpa).Times(2).Return(tc.legacySelector, nil)
+ 			targetSelectorFetcher.EXPECT().Fetch(vpa).Return(tc.selector, tc.fetchSelectorError)
+ 			clusterStateFeeder.LoadVPAs()
+ 
+diff --git a/vertical-pod-autoscaler/pkg/target/composite_fetcher.go b/vertical-pod-autoscaler/pkg/target/composite_fetcher.go
+deleted file mode 100644
+index bb90608415..0000000000
+--- a/vertical-pod-autoscaler/pkg/target/composite_fetcher.go
++++ /dev/null
+@@ -1,49 +0,0 @@
+-/*
+-Copyright 2019 The Kubernetes Authors.
+-
+-Licensed under the Apache License, Version 2.0 (the "License");
+-you may not use this file except in compliance with the License.
+-You may obtain a copy of the License at
+-
+-    http://www.apache.org/licenses/LICENSE-2.0
+-
+-Unless required by applicable law or agreed to in writing, software
+-distributed under the License is distributed on an "AS IS" BASIS,
+-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-*/
+-
+-package target
+-
+-import (
+-	"k8s.io/apimachinery/pkg/labels"
+-	vpa_types_v1beta2 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
+-	"k8s.io/klog"
+-)
+-
+-type compositeTargetSelectorFetcher struct {
+-	primary, backup VpaTargetSelectorFetcher
+-}
+-
+-// NewCompositeTargetSelectorFetcher returns a new VpaTargetSelectorFetcher that uses primary
+-// VpaTargetSelectorFetcher by default and when it fails tries backup VpaTargetSelectorFetcher.
+-func NewCompositeTargetSelectorFetcher(primary, backup VpaTargetSelectorFetcher) VpaTargetSelectorFetcher {
+-	return &compositeTargetSelectorFetcher{
+-		primary: primary,
+-		backup:  backup,
+-	}
+-}
+-
+-func (f *compositeTargetSelectorFetcher) Fetch(vpa *vpa_types_v1beta2.VerticalPodAutoscaler) (labels.Selector, error) {
+-	primarySelector, primaryErr := f.primary.Fetch(vpa)
+-	if primaryErr == nil {
+-		return primarySelector, primaryErr
+-	}
+-	klog.Errorf("Primary VpaTargetSelectorFetcher failed. Err: %v", primaryErr)
+-	backupSelector, _ := f.backup.Fetch(vpa)
+-	if backupSelector != nil {
+-		return backupSelector, nil
+-	}
+-	return nil, primaryErr
+-}
+diff --git a/vertical-pod-autoscaler/pkg/target/fetcher.go b/vertical-pod-autoscaler/pkg/target/fetcher.go
+index 0600a26ec2..6fa77df6a6 100644
+--- a/vertical-pod-autoscaler/pkg/target/fetcher.go
++++ b/vertical-pod-autoscaler/pkg/target/fetcher.go
+@@ -18,7 +18,6 @@ package target
+ 
+ import (
+ 	"fmt"
+-	"k8s.io/klog"
+ 	"time"
+ 
+ 	appsv1 "k8s.io/api/apps/v1"
+@@ -39,6 +38,7 @@ import (
+ 	"k8s.io/client-go/restmapper"
+ 	"k8s.io/client-go/scale"
+ 	"k8s.io/client-go/tools/cache"
++	"k8s.io/klog"
+ )
+ 
+ const (
+@@ -115,7 +115,7 @@ type vpaTargetSelectorFetcher struct {
+ 
+ func (f *vpaTargetSelectorFetcher) Fetch(vpa *vpa_types.VerticalPodAutoscaler) (labels.Selector, error) {
+ 	if vpa.Spec.TargetRef == nil {
+-		return nil, fmt.Errorf("targetRef not defined")
++		return nil, fmt.Errorf("targetRef not defined. If this is a v1beta1 object switch to v1beta2.")
+ 	}
+ 	kind := wellKnownController(vpa.Spec.TargetRef.Kind)
+ 	informer, exists := f.informersMap[kind]
+diff --git a/vertical-pod-autoscaler/pkg/target/v1beta1_fetcher.go b/vertical-pod-autoscaler/pkg/target/v1beta1_fetcher.go
+deleted file mode 100644
+index 7fcc3375cc..0000000000
+--- a/vertical-pod-autoscaler/pkg/target/v1beta1_fetcher.go
++++ /dev/null
+@@ -1,87 +0,0 @@
+-/*
+-Copyright 2019 The Kubernetes Authors.
+-
+-Licensed under the Apache License, Version 2.0 (the "License");
+-you may not use this file except in compliance with the License.
+-You may obtain a copy of the License at
+-
+-    http://www.apache.org/licenses/LICENSE-2.0
+-
+-Unless required by applicable law or agreed to in writing, software
+-distributed under the License is distributed on an "AS IS" BASIS,
+-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-*/
+-
+-package target
+-
+-import (
+-	"fmt"
+-	"time"
+-
+-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+-	"k8s.io/apimachinery/pkg/fields"
+-	"k8s.io/apimachinery/pkg/labels"
+-	vpa_types_v1beta1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta1"
+-	vpa_types_v1beta2 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
+-	vpa_clientset "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned"
+-	vpa_lister_v1beta1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/listers/autoscaling.k8s.io/v1beta1"
+-	"k8s.io/client-go/rest"
+-	"k8s.io/client-go/tools/cache"
+-	"k8s.io/klog"
+-	"k8s.io/kubernetes/pkg/apis/core"
+-)
+-
+-type beta1TargetSelectorFetcher struct {
+-	vpaLister vpa_lister_v1beta1.VerticalPodAutoscalerLister
+-}
+-
+-// NewBeta1TargetSelectorFetcher returns new instance of VpaTargetSelectorFetcher that uses selector from deprecated v1beta1
+-func NewBeta1TargetSelectorFetcher(config *rest.Config) VpaTargetSelectorFetcher {
+-	vpaClient := vpa_clientset.NewForConfigOrDie(config)
+-	return &beta1TargetSelectorFetcher{
+-		vpaLister: newAllVpasLister(vpaClient, make(chan struct{})),
+-	}
+-}
+-
+-func (f *beta1TargetSelectorFetcher) Fetch(vpa *vpa_types_v1beta2.VerticalPodAutoscaler) (labels.Selector, error) {
+-	list, err := f.vpaLister.List(labels.Everything())
+-	if err != nil {
+-		return nil, fmt.Errorf("Failed to list v1beta1 VPAs. Reason: %v", err)
+-	}
+-
+-	for _, beta1vpa := range list {
+-		if beta1vpa.Namespace == vpa.Namespace && beta1vpa.Name == vpa.Name && beta1vpa.UID == vpa.UID {
+-			if beta1vpa.Spec.Selector == nil {
+-				return nil, fmt.Errorf("v1beta1 selector not found")
+-			}
+-			selector, err := metav1.LabelSelectorAsSelector(beta1vpa.Spec.Selector)
+-			if err != nil {
+-				// Intentionally ignore error
+-				return labels.Nothing(), nil
+-			}
+-			klog.Infof("Found deprecated label selector for VPA %s/%s", vpa.Namespace, vpa.Name)
+-			return selector, nil
+-		}
+-	}
+-
+-	return nil, fmt.Errorf("v1beta1 VPA not found")
+-}
+-
+-func newAllVpasLister(vpaClient *vpa_clientset.Clientset, stopChannel <-chan struct{}) vpa_lister_v1beta1.VerticalPodAutoscalerLister {
+-	vpaListWatch := cache.NewListWatchFromClient(vpaClient.AutoscalingV1beta1().RESTClient(), "verticalpodautoscalers", core.NamespaceAll, fields.Everything())
+-	indexer, controller := cache.NewIndexerInformer(vpaListWatch,
+-		&vpa_types_v1beta1.VerticalPodAutoscaler{},
+-		1*time.Hour,
+-		&cache.ResourceEventHandlerFuncs{},
+-		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+-	vpaLister := vpa_lister_v1beta1.NewVerticalPodAutoscalerLister(indexer)
+-	go controller.Run(stopChannel)
+-	if !cache.WaitForCacheSync(make(chan struct{}), controller.HasSynced) {
+-		klog.Fatalf("Failed to sync VPA v1beta1 cache during initialization")
+-	} else {
+-		klog.Info("Initial VPA v1beta1 synced successfully")
+-	}
+-	return vpaLister
+-}
+diff --git a/vertical-pod-autoscaler/pkg/target/v1beta1_fetcher_test.go b/vertical-pod-autoscaler/pkg/target/v1beta1_fetcher_test.go
+deleted file mode 100644
+index 6ab56737f8..0000000000
+--- a/vertical-pod-autoscaler/pkg/target/v1beta1_fetcher_test.go
++++ /dev/null
+@@ -1,178 +0,0 @@
+-/*
+-Copyright 2019 The Kubernetes Authors.
+-
+-Licensed under the Apache License, Version 2.0 (the "License");
+-you may not use this file except in compliance with the License.
+-You may obtain a copy of the License at
+-
+-    http://www.apache.org/licenses/LICENSE-2.0
+-
+-Unless required by applicable law or agreed to in writing, software
+-distributed under the License is distributed on an "AS IS" BASIS,
+-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-See the License for the specific language governing permissions and
+-limitations under the License.
+-*/
+-
+-package target
+-
+-import (
+-	"fmt"
+-	"testing"
+-
+-	"github.com/stretchr/testify/assert"
+-
+-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+-	"k8s.io/apimachinery/pkg/labels"
+-	vpa_types_v1beta1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta1"
+-	vpa_types_v1beta2 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
+-	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/test"
+-)
+-
+-// VerticalPodAutoscalerBuilder helps building test instances of VerticalPodAutoscaler.
+-type VerticalPodAutoscalerBuilder interface {
+-	WithName(vpaName string) VerticalPodAutoscalerBuilder
+-	WithNamespace(namespace string) VerticalPodAutoscalerBuilder
+-	WithSelector(labelSelector string) VerticalPodAutoscalerBuilder
+-	GetV1Beta1() *vpa_types_v1beta1.VerticalPodAutoscaler
+-	GetV1Beta2() *vpa_types_v1beta2.VerticalPodAutoscaler
+-}
+-
+-// VerticalPodAutoscaler returns a new VerticalPodAutoscalerBuilder.
+-func VerticalPodAutoscaler() VerticalPodAutoscalerBuilder {
+-	return &verticalPodAutoscalerBuilder{
+-		namespace: "default",
+-	}
+-}
+-
+-type verticalPodAutoscalerBuilder struct {
+-	vpaName       string
+-	namespace     string
+-	labelSelector *metav1.LabelSelector
+-}
+-
+-func (b *verticalPodAutoscalerBuilder) WithName(vpaName string) VerticalPodAutoscalerBuilder {
+-	c := *b
+-	c.vpaName = vpaName
+-	return &c
+-}
+-
+-func (b *verticalPodAutoscalerBuilder) WithNamespace(namespace string) VerticalPodAutoscalerBuilder {
+-	c := *b
+-	c.namespace = namespace
+-	return &c
+-}
+-
+-func (b *verticalPodAutoscalerBuilder) WithSelector(labelSelector string) VerticalPodAutoscalerBuilder {
+-	c := *b
+-	if labelSelector, err := metav1.ParseToLabelSelector(labelSelector); err != nil {
+-		panic(err)
+-	} else {
+-		c.labelSelector = labelSelector
+-	}
+-	return &c
+-}
+-
+-func (b *verticalPodAutoscalerBuilder) GetV1Beta1() *vpa_types_v1beta1.VerticalPodAutoscaler {
+-	return &vpa_types_v1beta1.VerticalPodAutoscaler{
+-		ObjectMeta: metav1.ObjectMeta{
+-			Name:      b.vpaName,
+-			Namespace: b.namespace,
+-		},
+-		Spec: vpa_types_v1beta1.VerticalPodAutoscalerSpec{
+-			Selector: b.labelSelector,
+-		},
+-	}
+-}
+-
+-func (b *verticalPodAutoscalerBuilder) GetV1Beta2() *vpa_types_v1beta2.VerticalPodAutoscaler {
+-	if b.labelSelector != nil {
+-		panic("v1beta2 doesn't support selector")
+-	}
+-	return &vpa_types_v1beta2.VerticalPodAutoscaler{
+-		ObjectMeta: metav1.ObjectMeta{
+-			Name:      b.vpaName,
+-			Namespace: b.namespace,
+-		},
+-	}
+-}
+-
+-func parseLabelSelector(selector string) labels.Selector {
+-	labelSelector, _ := metav1.ParseToLabelSelector(selector)
+-	parsedSelector, _ := metav1.LabelSelectorAsSelector(labelSelector)
+-	return parsedSelector
+-}
+-
+-func TestLegacySelector(t *testing.T) {
+-
+-	type testCase struct {
+-		vpa                 *vpa_types_v1beta2.VerticalPodAutoscaler
+-		vpaInStore          *vpa_types_v1beta1.VerticalPodAutoscaler
+-		expectedSelector    labels.Selector
+-		expectedError       bool
+-		expectedErrorString string
+-	}
+-
+-	testCases := []testCase{
+-		{
+-			vpa:                 nil,
+-			vpaInStore:          nil,
+-			expectedSelector:    nil,
+-			expectedError:       true,
+-			expectedErrorString: "Failed to list v1beta1 VPAs. Reason: Cannot list",
+-		}, {
+-			vpa:                 VerticalPodAutoscaler().WithName("a").GetV1Beta2(),
+-			vpaInStore:          nil,
+-			expectedSelector:    nil,
+-			expectedError:       true,
+-			expectedErrorString: "Failed to list v1beta1 VPAs. Reason: Cannot list",
+-		}, {
+-			vpa:                 VerticalPodAutoscaler().WithName("a").GetV1Beta2(),
+-			vpaInStore:          VerticalPodAutoscaler().WithName("b").GetV1Beta1(),
+-			expectedSelector:    nil,
+-			expectedError:       true,
+-			expectedErrorString: "v1beta1 VPA not found",
+-		}, {
+-			vpa:                 VerticalPodAutoscaler().WithName("a").GetV1Beta2(),
+-			vpaInStore:          VerticalPodAutoscaler().WithName("a").GetV1Beta1(),
+-			expectedSelector:    nil,
+-			expectedError:       true,
+-			expectedErrorString: "v1beta1 selector not found",
+-		}, {
+-			vpa:              VerticalPodAutoscaler().WithName("a").GetV1Beta2(),
+-			vpaInStore:       VerticalPodAutoscaler().WithName("a").WithSelector("app = t").GetV1Beta1(),
+-			expectedSelector: parseLabelSelector("app = t"),
+-			expectedError:    false,
+-		},
+-	}
+-
+-	for i, tc := range testCases {
+-		t.Run(fmt.Sprintf("test case number: %d", i), func(t *testing.T) {
+-			vpaLister := &test.VerticalPodAutoscalerV1Beta1ListerMock{}
+-			if tc.vpaInStore == nil {
+-				vpaLister.On("List").Return(nil, fmt.Errorf("Cannot list"))
+-			} else {
+-				vpaLister.On("List").Return([]*vpa_types_v1beta1.VerticalPodAutoscaler{tc.vpaInStore}, nil)
+-			}
+-
+-			fetcher := beta1TargetSelectorFetcher{
+-				vpaLister: vpaLister,
+-			}
+-
+-			selector, err := fetcher.Fetch(tc.vpa)
+-
+-			if tc.expectedError {
+-				assert.Equal(t, fmt.Errorf(tc.expectedErrorString), err)
+-			} else {
+-				assert.Nil(t, err)
+-			}
+-
+-			if tc.expectedSelector == nil {
+-				assert.Nil(t, selector)
+-			} else {
+-				assert.Equal(t, tc.expectedSelector.String(), selector.String())
+-			}
+-		})
+-	}
+-
+-}
+diff --git a/vertical-pod-autoscaler/pkg/updater/main.go b/vertical-pod-autoscaler/pkg/updater/main.go
+index aa6b2fb1fa..9bb6a8f229 100644
+--- a/vertical-pod-autoscaler/pkg/updater/main.go
++++ b/vertical-pod-autoscaler/pkg/updater/main.go
+@@ -18,13 +18,13 @@ package main
+ 
+ import (
+ 	"flag"
+-	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/limitrange"
+ 	"time"
+ 
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/common"
+ 	vpa_clientset "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/target"
+ 	updater "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/updater/logic"
++	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/limitrange"
+ 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/metrics"
+ 	metrics_updater "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/metrics/updater"
+ 	vpa_api_util "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/vpa"
+@@ -68,10 +68,7 @@ func main() {
+ 	kubeClient := kube_client.NewForConfigOrDie(config)
+ 	vpaClient := vpa_clientset.NewForConfigOrDie(config)
+ 	factory := informers.NewSharedInformerFactory(kubeClient, defaultResyncPeriod)
+-	targetSelectorFetcher := target.NewCompositeTargetSelectorFetcher(
+-		target.NewVpaTargetSelectorFetcher(config, kubeClient, factory),
+-		target.NewBeta1TargetSelectorFetcher(config),
+-	)
++	targetSelectorFetcher := target.NewVpaTargetSelectorFetcher(config, kubeClient, factory)
+ 	var limitRangeCalculator limitrange.LimitRangeCalculator
+ 	limitRangeCalculator, err = limitrange.NewLimitsRangeCalculator(factory)
+ 	if err != nil {
